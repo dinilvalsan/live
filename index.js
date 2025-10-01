@@ -167,25 +167,49 @@ const initializeConfig = async () => {
 
 // Addon Manifest - Dynamic based on config
 const getManifest = () => {
+    const countryCatalogs = config.includeCountries.map(country => ({
+        type: 'tv',
+        id: `iptv-channels-${country}`,
+        name: `IPTV - ${country}`,
+        extra: [
+            {
+                name: 'search',
+                isRequired: false
+            },
+            {
+                name: 'genre',
+                isRequired: false,
+                options: config.allGenres
+            }
+        ],
+    }));
+
+    // Add a unified search catalog
+    const searchCatalog = {
+        type: 'tv',
+        id: 'iptv-channels-all',
+        name: 'IPTV - All Channels',
+        extra: [
+            {
+                name: 'search',
+                isRequired: false
+            },
+            {
+                name: 'genre',
+                isRequired: false,
+                options: config.allGenres
+            }
+        ],
+    };
+
     return {
         id: 'org.iptv',
         name: 'IPTV Addon',
-        version: '0.0.5',
+        version: '0.0.6',
         description: `Watch live TV from ${config.includeCountries.join(', ')}`,
         resources: ['catalog', 'meta', 'stream'],
         types: ['tv'],
-        catalogs: config.includeCountries.map(country => ({
-            type: 'tv',
-            id: `iptv-channels-${country}`,
-            name: `IPTV - ${country}`,
-            extra: [
-                {
-                    name: 'genre',
-                    isRequired: false,
-                    options: config.allGenres
-                }
-            ],
-        })),
+        catalogs: [searchCatalog, ...countryCatalogs],
         idPrefixes: ['iptv-'],
         behaviorHints: { configurable: false, configurationRequired: false },
         logo: "https://dl.strem.io/addon-logo.png",
@@ -366,19 +390,40 @@ const initializeAddon = () => {
 
     // Catalog Handler
     addon.defineCatalogHandler(async ({ type, id, extra }) => {
-        if (type === 'tv' && id.startsWith('iptv-channels-')) {
-            const country = id.split('-')[2];
+        if (type === 'tv' && (id.startsWith('iptv-channels-') || id === 'iptv-channels-all')) {
             const allChannels = await getAllInfo();
-            let filteredChannels = allChannels.filter(channel => channel.genres.includes(country));
-
+            let filteredChannels = allChannels;
+    
+            // Filter by country if not "all"
+            if (id !== 'iptv-channels-all') {
+                const country = id.split('-')[2];
+                filteredChannels = filteredChannels.filter(channel => channel.genres.includes(country));
+            }
+    
+            // Handle search query
+            if (extra && extra.search) {
+                const searchQuery = extra.search.toLowerCase().trim();
+                console.log(`Search query: "${searchQuery}"`);
+                
+                filteredChannels = filteredChannels.filter(channel => {
+                    const nameMatch = channel.name.toLowerCase().includes(searchQuery);
+                    const genreMatch = channel.genres.some(genre => 
+                        genre.toLowerCase().includes(searchQuery)
+                    );
+                    return nameMatch || genreMatch;
+                });
+            }
+    
+            // Handle genre filter
             if (extra && extra.genre) {
                 const genres = Array.isArray(extra.genre) ? extra.genre : [extra.genre];
                 filteredChannels = filteredChannels.filter(channel =>
                     genres.some(genre => channel.genres.includes(genre))
                 );
             }
-
-            console.log(`Serving catalog for ${country} with ${filteredChannels.length} channels${extra?.genre ? ` (genre: ${extra.genre})` : ''}`);
+    
+            console.log(`Serving ${filteredChannels.length} channels${extra?.search ? ` (search: "${extra.search}")` : ''}${extra?.genre ? ` (genre: ${extra.genre})` : ''}`);
+            
             return { metas: filteredChannels };
         }
         return { metas: [] };
